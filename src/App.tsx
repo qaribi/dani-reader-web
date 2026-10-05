@@ -29,7 +29,7 @@ export default function App() {
   };
   if (active) return <ReaderPage key={active.id} book={active} library={library} settings={settings} onSettings={changeSettings} onExit={() => setActive(null)} />;
   return <main className="library-shell">
-    <header><div><h1>کتابخانهٔ دانی · DANI Reader</h1><p>کتاب‌های EPUB 3 محلی، بدون بارگذاری کتاب روی سرور</p></div><span className="version">نسخهٔ در حال توسعه</span></header>
+    <header><div><h1>کتابخانهٔ دانی · DANI Reader</h1><p>کتاب‌های EPUB 3 محلی، بدون بارگذاری کتاب روی سرور</p></div><span className="version">نسخهٔ ۰.۱.۰</span></header>
     <section className="import-panel"><h2>افزودن کتاب</h2><p>EPUB بدون رمزگذاری، حداکثر ۳۲ مگابایت. کتاب و یادداشت‌ها در همین مرورگر نگهداری می‌شوند.</p><label className="file-button">انتخاب EPUB<input aria-label="افزودن EPUB" type="file" accept=".epub,application/epub+zip" disabled={busy} onChange={event => { void add(event.target.files?.[0]); event.target.value = ''; }} /></label><p role="status">{status}</p></section>
     <section aria-label="کتاب‌های کتابخانه"><h2>کتاب‌های من ({books.length})</h2>{!books.length && <p>برای شروع یک کتاب محلی اضافه کنید. پاک‌کردن دادهٔ مرورگر، کتابخانه و یادداشت‌ها را پاک می‌کند.</p>}<div className="book-grid">{books.map(book => <article key={book.id}>
       <h3 dir="auto">{book.title}</h3><p><bdi>{book.language}</bdi> · {(book.inputBytes / 1024).toFixed(1)} KB</p>
