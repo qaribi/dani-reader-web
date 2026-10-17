@@ -28,7 +28,7 @@ Open the printed loopback URL and import a local, unencrypted EPUB 3. `public/fi
 | Persian, Arabic, Dari, Pashto and Urdu original content fixtures | Included | Rendered synthetic examples; native-language review welcome |
 | PDF, DRM, remote catalogues, accounts, cloud sync, mobile packaging | Outside this Web edition | Not implemented |
 
-The interface currently uses Persian. The four-language mission text below is documentation, not a claim that the interface has four translated versions. The rendered language checks use system fonts and original short examples; they do not establish comprehensive typography coverage.
+The interface language can be selected independently of publication language: Persian (`fa`, default), Arabic (`ar`), Dari (`prs`), Pashto (`ps`), and Urdu (`ur`). Arabic, Dari, Pashto and Urdu are initial translations, explicitly marked as needing native-speaker review. See [UI localization](docs/LOCALIZATION.md) for resource versions, review workflow and regression checks. System-font rendering and synthetic fixtures do not establish comprehensive typography coverage.
 
 Both reflowable and fixed-layout synthetic EPUBs render in the tested Chrome increment. Fixed-layout font size, line height and theme controls are disabled to preserve the publisher's page geometry. A resource-rich original EPUB with 250 additional resources imports and opens; an oversized resource manifest is rejected before it enters the library.
 

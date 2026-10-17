@@ -1,10 +1,12 @@
+import { useI18n, LanguagePicker } from '../i18n/react.tsx';
+import { statusText } from '../i18n/core.ts';
 import { useEffect, useRef, useState } from 'react';
 import { ReaderSession, READER_BUILD, LIMITS, ReaderHostError } from './host-contract.ts';
 import type { Annotation, Locator, ReaderContext, ReadingState } from './host-contract.ts';
 import { LocalTransport } from '../library/local-transport.ts';
 import type { ImportedBook } from '../library/archive.ts';
 import type { LocalLibrary, ReadingSettings } from '../library/database.ts';
-import { readerErrorMessage } from './errors.ts';
+import { readerErrorKey } from './errors.ts';
 import { readingLocator as locator } from './reading-location.ts';
 import { openHostPublication } from './publication.ts';
 import { ConsumerLifetime, clearPrivateWorkspace, retirePrivateWorkspace, emptyReading,
@@ -34,11 +36,12 @@ interface FoliateElement extends HTMLElement {
 }
 type TocRow = { label: string; href: string };
 type OwnedResources = { token: ConsumerToken; stop(disposeTransport?: boolean): void };
-const safeError = readerErrorMessage;
+const safeError = readerErrorKey;
 const tocEntries = (items: TocItem[], depth = 0): { label: string; href: string }[] =>
   depth > 16 ? [] : items.slice(0, 256).flatMap(item => [item, ...tocEntries(item.subitems ?? [], depth + 1)]).slice(0, 256);
 
 export default function ReaderPage({ book: importedBook, library, settings, onSettings, onExit }: { book: ImportedBook; library: LocalLibrary; settings: ReadingSettings; onSettings(value: ReadingSettings): void; onExit(): void }) {
+  const { t, locale, number, percent } = useI18n();
   const mount = useRef<HTMLDivElement>(null);
   const view = useRef<FoliateElement | null>(null);
   const session = useRef<ReaderSession | null>(null);
@@ -49,7 +52,7 @@ export default function ReaderPage({ book: importedBook, library, settings, onSe
   const selection = useRef<Locator | null>(null);
   const [context, setContext] = useState<ReaderContext | null>(null);
   const [reading, setReading] = useState<ReadingState>(emptyReading);
-  const [status, setStatus] = useState('در حال بازکردن کتاب محلی…');
+  const [status, setStatus] = useState('openingBook');
   const [toc, setToc] = useState<TocRow[]>([]);
   const [query, setQuery] = useState('');
   const [matches, setMatches] = useState<SearchMatch[]>([]);
@@ -82,7 +85,7 @@ export default function ReaderPage({ book: importedBook, library, settings, onSe
       if (!consumer.isCurrent(token) || session.current !== host || !host.context) return;
       await loadAndPublishReading(consumer, token, sink, () => host.loadState());
     }).catch(error => {
-      consumer.publish(token, () => setStatus('ذخیره انجام نشد: ' + safeError(error)));
+      consumer.publish(token, () => setStatus('saveFailed\u001f' + safeError(error)));
     }).finally(() => {
       acceptedSaves.current--;
       consumer.publish(token, () => setSaving(acceptedSaves.current > 0));
@@ -92,7 +95,7 @@ export default function ReaderPage({ book: importedBook, library, settings, onSe
 
   useEffect(() => {
     const token = consumer.begin();
-    clearPrivateWorkspace(consumer, token, sink, 'در حال بازکردن کتاب محلی…');
+    clearPrivateWorkspace(consumer, token, sink, 'openingBook');
     let element: FoliateElement | null = null;
     let host: ReaderSession | null = null;
     let transport: LocalTransport | null = null;
@@ -129,7 +132,7 @@ export default function ReaderPage({ book: importedBook, library, settings, onSe
       consumer.publish(token, () => setFixedLayout(publication.rendition?.layout === 'pre-paginated'));
       assertActive();
       element = document.createElement('dani-epub-view') as FoliateElement;
-      element.setAttribute('aria-label', 'متن کتاب');
+      element.setAttribute('aria-label', 'EPUB');
       element.setAttribute('tabindex', '0');
       consumer.publish(token, () => mount.current?.append(element!), () => { view.current = element; });
       element.addEventListener('relocate', (event: Event) => {
@@ -182,7 +185,7 @@ export default function ReaderPage({ book: importedBook, library, settings, onSe
             if (!consumer.isCurrent(token) || view.current !== element) return;
             await element!.addAnnotation({ value: annotation.locator.value });
           }
-        }).catch(() => { consumer.publish(token, () => setStatus('نمایش یادداشت انجام نشد؛ کتاب را دوباره باز کنید.')); });
+        }).catch(() => { consumer.publish(token, () => setStatus('overlayFailed\u001f')); });
       });
       await element.open(publication);
       assertActive();
@@ -194,17 +197,19 @@ export default function ReaderPage({ book: importedBook, library, settings, onSe
         assertActive();
       }
       consumer.publish(token, () => setToc(tocEntries(publication.toc ?? [])), () => setContext(active),
-        () => setStatus('آمادهٔ مطالعهٔ محلی'));
+        () => setStatus('ready'));
     };
     initialize().catch(error => {
-      retirePrivateWorkspace(consumer, token, sink, 'ریدِر فعال نشد: ' + safeError(error));
+      retirePrivateWorkspace(consumer, token, sink, 'openFailed\u001f' + safeError(error));
       host?.invalidate(); owned.stop();
     });
     return () => {
-      retirePrivateWorkspace(consumer, token, sink, 'نشست مطالعه بسته شد.');
+      retirePrivateWorkspace(consumer, token, sink, 'closed');
       host?.invalidate(); owned.stop();
     };
   }, [importedBook.id, library]);
+
+  useEffect(() => { view.current?.setAttribute('aria-label', t('bookText')); }, [locale, context]);
 
   useEffect(() => {
     const token = consumer.current;
@@ -219,7 +224,7 @@ export default function ReaderPage({ book: importedBook, library, settings, onSe
     const currentView = view.current;
     if (!token || !session.current?.context || !currentView) return;
     const anchor = kind === 'bookmark' ? stateRef.current.locator : selection.current ?? (kind === 'note' ? stateRef.current.locator : null);
-    if (!anchor) { consumer.publish(token, () => setStatus('ابتدا محل مطالعه یا متن یادداشت را انتخاب کنید.')); return; }
+    if (!anchor) { consumer.publish(token, () => setStatus('selectAnchor')); return; }
     const annotation: Annotation = { id: crypto.randomUUID(), revision: 0, kind,
       locator: anchor, deleted: false, ...(kind === 'note' ? { note } : {}) };
     enqueueSave(async (host, current) => {
@@ -232,9 +237,9 @@ export default function ReaderPage({ book: importedBook, library, settings, onSe
   const navigate = async (action: () => Promise<void> | undefined) => {
     const token = consumer.current;
     if (!token || navigating || !session.current?.context) return;
-    consumer.publish(token, () => setNavigating(true), () => setStatus('در حال جابه‌جایی…'));
-    try { await action(); consumer.publish(token, () => setStatus('آمادهٔ مطالعهٔ محلی')); }
-    catch (error) { consumer.publish(token, () => setStatus('جابه‌جایی انجام نشد: ' + safeError(error))); }
+    consumer.publish(token, () => setNavigating(true), () => setStatus('navigating'));
+    try { await action(); consumer.publish(token, () => setStatus('ready')); }
+    catch (error) { consumer.publish(token, () => setStatus('navigationFailed\u001f' + safeError(error))); }
     finally { consumer.publish(token, () => setNavigating(false)); }
   };
   const search = async () => {
@@ -244,7 +249,7 @@ export default function ReaderPage({ book: importedBook, library, settings, onSe
     consumer.publish(token, () => setMatches([]));
     try {
       await consumeSearchResults(consumer, token, sink, current.search({ query, matchCase: false, matchWholeWords: false }));
-    } catch (error) { consumer.publish(token, () => setStatus('جست‌وجو انجام نشد: ' + safeError(error))); }
+    } catch (error) { consumer.publish(token, () => setStatus('searchFailed\u001f' + safeError(error))); }
   };
   const exit = async () => {
     const token = consumer.current;
@@ -254,7 +259,7 @@ export default function ReaderPage({ book: importedBook, library, settings, onSe
     const pending = saveChain.current;
     const owned = resources.current?.token === token ? resources.current : null;
     // No await before retirement. A queued save/load/search cannot republish.
-    retirePrivateWorkspace(consumer, token, sink, 'نشست مطالعه بسته شد.');
+    retirePrivateWorkspace(consumer, token, sink, 'closed');
     owned?.stop(false);
     try { await pending; if (lastLocation && host?.context) { const current = await host.loadState(); await host.saveProgress(lastLocation, current.revision); } await host?.close(); }
     catch { /* A retired consumer must not publish a late close error. */ }
@@ -274,26 +279,26 @@ export default function ReaderPage({ book: importedBook, library, settings, onSe
   };
 
   return <main className="reader-shell" data-book-id={importedBook.id} data-book-language={importedBook.language} data-reading-cfi={reading.locator?.value} data-reader-ready={Boolean(context)} data-navigation-pending={navigating}>
-    <header><strong>{importedBook.title}</strong><span role="status">{saving ? 'در حال ذخیرهٔ مطالعه…' : status}</span><button disabled={saving || navigating} onClick={exit}>پایان مطالعه</button></header>
-    <section className="reader-tools" aria-label="تنظیمات مطالعه">
-      <button disabled={!context || navigating} onClick={() => { void navigate(() => view.current?.prev()); }}>صفحهٔ قبل</button>
-      <button disabled={!context || navigating} onClick={() => { void navigate(() => view.current?.next()); }}>صفحهٔ بعد</button>
-      <label>اندازهٔ متن <input disabled={fixedLayout} aria-label="اندازهٔ متن" type="range" min="14" max="40" value={fontSize} onChange={event => setFontSize(Number(event.target.value))} /></label>
-      <label>نمایش <select value={flow} onChange={event => setFlow(event.target.value as typeof flow)}><option value="paginated">صفحه‌ای</option><option value="scrolled">پیوسته</option></select></label>
-      <label>فاصلهٔ سطر <input disabled={fixedLayout} aria-label="فاصلهٔ سطر" type="range" min="1.2" max="3" step="0.1" value={settings.lineHeight} onChange={event => onSettings({ ...settings, lineHeight: Number(event.target.value) })} /></label>
-      <label>رنگ <select disabled={fixedLayout} aria-label="رنگ مطالعه" value={settings.theme} onChange={event => onSettings({ ...settings, theme: event.target.value as ReadingSettings['theme'] })}><option value="light">روشن</option><option value="sepia">کاغذی</option><option value="dark">تیره</option></select></label>
-      {fixedLayout && <small>صفحه‌بندی ثابت: اندازه و رنگ ناشر حفظ می‌شود.</small>}
-      <button disabled={!context?.permissions.annotate} onClick={() => addAnnotation('bookmark')}>نشانک</button>
-      <button disabled={!context?.permissions.annotate} onClick={() => addAnnotation('highlight')}>برجسته‌سازی متن</button>
+    <header><strong dir="auto">{importedBook.title}</strong><LanguagePicker /><span role="status">{saving ? t('saving') : statusText(status, locale)}</span><button disabled={saving || navigating} onClick={exit}>{t('exit')}</button></header>
+    <section className="reader-tools" aria-label={t('settings')}>
+      <button disabled={!context || navigating} onClick={() => { void navigate(() => view.current?.prev()); }}>{t('previous')}</button>
+      <button disabled={!context || navigating} onClick={() => { void navigate(() => view.current?.next()); }}>{t('next')}</button>
+      <label>{t('fontSize')} <input disabled={fixedLayout} aria-label={t('fontSize')} type="range" min="14" max="40" value={fontSize} onChange={event => setFontSize(Number(event.target.value))} /></label>
+      <label>{t('flow')} <select value={flow} onChange={event => setFlow(event.target.value as typeof flow)}><option value="paginated">{t('paginated')}</option><option value="scrolled">{t('scrolled')}</option></select></label>
+      <label>{t('lineHeight')} <input disabled={fixedLayout} aria-label={t('lineHeight')} type="range" min="1.2" max="3" step="0.1" value={settings.lineHeight} onChange={event => onSettings({ ...settings, lineHeight: Number(event.target.value) })} /></label>
+      <label>{t('color')} <select disabled={fixedLayout} aria-label={t('theme')} value={settings.theme} onChange={event => onSettings({ ...settings, theme: event.target.value as ReadingSettings['theme'] })}><option value="light">{t('light')}</option><option value="sepia">{t('sepia')}</option><option value="dark">{t('dark')}</option></select></label>
+      {fixedLayout && <small>{t('fixedLayout')}</small>}
+      <button disabled={!context?.permissions.annotate} onClick={() => addAnnotation('bookmark')}>{t('bookmark')}</button>
+      <button disabled={!context?.permissions.annotate} onClick={() => addAnnotation('highlight')}>{t('highlight')}</button>
     </section>
     <div className="reader-body">
-      <aside aria-label="فهرست و یادداشت‌ها">
-        <details open><summary>فهرست</summary>{toc.map((item, index) => <button disabled={navigating} key={index} onClick={() => { void navigate(() => view.current?.goTo(item.href)); }}>{item.label}</button>)}</details>
-        <details><summary>جست‌وجو</summary><form onSubmit={event => { event.preventDefault(); void search(); }}><input aria-label="عبارت جست‌وجو" disabled={!context} maxLength={LIMITS.searchChars} value={query} onChange={event => editPrivateText(setQuery, event.target.value)} /><button type="submit" disabled={!context}>پیدا کردن</button></form>{matches.map((match, index) => <button key={index} onClick={() => view.current?.goTo(match.cfi)}>{typeof match.excerpt === 'string' ? match.excerpt : match.excerpt ? match.excerpt.pre + match.excerpt.match + match.excerpt.post : String(index + 1)}</button>)}</details>
-        <details><summary>یادداشت‌ها</summary><textarea aria-label="یادداشت برای متن انتخاب‌شده" disabled={!context?.permissions.annotate} maxLength={2048} value={note} onChange={event => editPrivateText(setNote, event.target.value)} /><button disabled={!context?.permissions.annotate} onClick={() => addAnnotation('note')}>ذخیرهٔ یادداشت</button>{reading.unresolvedLegacyCount > 0 && <p>یادداشت قدیمی محفوظ است؛ محل {reading.unresolvedLegacyCount} مورد هنوز تطبیق داده نشده.</p>}{reading.annotations.filter(item => !item.deleted).map(item => <div className="annotation" key={item.id}><button onClick={() => view.current?.goTo(item.locator.value)}>{item.note || (item.kind === 'bookmark' ? 'نشانک' : 'متن برجسته')}</button><button disabled={saving} onClick={() => deleteAnnotation(item)}>حذف</button></div>)}</details>
+      <aside aria-label={t('sidebar')}>
+        <details open><summary>{t('toc')}</summary>{toc.map((item, index) => <button disabled={navigating} key={index} onClick={() => { void navigate(() => view.current?.goTo(item.href)); }}><bdi>{item.label}</bdi></button>)}</details>
+        <details><summary>{t('search')}</summary><form onSubmit={event => { event.preventDefault(); void search(); }}><input dir="auto" aria-label={t('searchQuery')} disabled={!context} maxLength={LIMITS.searchChars} value={query} onChange={event => editPrivateText(setQuery, event.target.value)} /><button type="submit" disabled={!context}>{t('find')}</button></form>{matches.map((match, index) => <button dir="auto" key={index} onClick={() => view.current?.goTo(match.cfi)}>{typeof match.excerpt === 'string' ? match.excerpt : match.excerpt ? match.excerpt.pre + match.excerpt.match + match.excerpt.post : number(index + 1)}</button>)}</details>
+        <details><summary>{t('notes')}</summary><textarea dir="auto" aria-label={t('noteInput')} disabled={!context?.permissions.annotate} maxLength={2048} value={note} onChange={event => editPrivateText(setNote, event.target.value)} /><button disabled={!context?.permissions.annotate} onClick={() => addAnnotation('note')}>{t('saveNote')}</button>{reading.unresolvedLegacyCount > 0 && <p>{t('legacyNotes', { count: number(reading.unresolvedLegacyCount) })}</p>}{reading.annotations.filter(item => !item.deleted).map(item => <div className="annotation" key={item.id}><button onClick={() => view.current?.goTo(item.locator.value)}>{item.note || (item.kind === 'bookmark' ? t('bookmark') : t('highlighted'))}</button><button disabled={saving} onClick={() => deleteAnnotation(item)}>{t('delete')}</button></div>)}</details>
       </aside>
       <div className="publication" ref={mount} />
     </div>
-    <footer><span>{reading.locator?.progression === undefined ? '—' : Math.round(reading.locator.progression * 100) + '٪'}</span><a href="https://github.com/qaribi/dani-reader-web">کد و مجوز · AGPL</a><small>Dani Reader based on Readest · {READER_BUILD}</small></footer>
+    <footer><span>{reading.locator?.progression === undefined ? '—' : percent(reading.locator.progression)}</span><a href="https://github.com/qaribi/dani-reader-web">{t('source')}</a><small>{t('credits')} · <bdi>{READER_BUILD}</bdi></small></footer>
   </main>;
 }
